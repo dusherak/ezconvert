@@ -3,7 +3,8 @@
 A tiny macOS menu-bar app for converting files by dragging them.
 
 Hold **⇧ Shift** while dragging any file. A circular menu opens under the cursor; drop the file on a
-format and the result is saved next to the original. Everything runs locally — nothing is uploaded.
+format and the result is saved next to the original. Conversions run locally — nothing is uploaded.
+Slide decks also get a **Study** section that writes summaries, lecture transcripts and textbook-style chapters.
 
 ## Install
 
@@ -26,11 +27,34 @@ yourself? See [Build](#build).
 | Images | Convert (PNG, JPEG, HEIC, TIFF, GIF, BMP), Compress, Resize, Edit (rotate, flip, grayscale, square), Remove background, PDF |
 | Video | Convert (MP4, MOV, MKV, WebM, AVI), Compress (1080p/720p/480p), GIF, extract audio, Mute, Rotate, 2× speed, Thumbnail, Merge |
 | Audio | Convert (MP3, M4A, WAV, FLAC, AIFF, Opus), Compress, Normalize, Trim silence, 1.5× speed, Merge |
-| PDF | Pages to images, Compress, Text, Split, Rotate, Merge |
+| Slides (PowerPoint, Keynote) | Study (Summarize, Transcript, Textbook), Slide text |
+| PDF | Study (Summarize, Transcript, Textbook), Pages to images, Compress, Text, Split, Rotate, Merge |
 | Documents | PDF, DOCX, RTF, TXT, HTML, ODT |
 | Anything | Zip |
 
 Groups (Convert, Compress, …) open into an outer ring. While converting, the menu turns into a progress ring.
+
+## Study
+
+Drop a slide deck (`.pptx`, `.key`) or a PDF on **Study**:
+
+- **Summarize** — an overview, key points and key terms, saved as `deck (summary).docx`.
+- **Transcript** — what a lecturer would say for each slide, saved as `deck (transcript).docx`. For
+  PowerPoint and Keynote decks it also writes `deck (with transcript).pptx` with each script in the
+  slide's speaker notes (when the deck has a notes layout; the original is never changed).
+- **Textbook** — a chapter that teaches the material: introduction, explained sections with examples,
+  summary and review questions, saved as `deck (textbook).docx`.
+
+Choose the AI under the menu bar icon → **Study AI**:
+
+- **On-device (Apple Intelligence)** — the default. Free, private and offline. Needs macOS 26+ with
+  Apple Intelligence turned on.
+- **Claude (Anthropic API)** — better writing and handles long decks in one go. Add your API key from
+  the same menu; it's stored in the macOS Keychain. Uses `claude-opus-5-5` and is billed to your
+  Anthropic account.
+
+Reading Keynote files needs the Keynote app (macOS asks once for permission to control it). Slides that
+are only pictures have no text to study yet.
 
 ## Where files go
 
@@ -59,8 +83,10 @@ ezconvert.app/Contents/MacOS/ezconvert --run "Convert/PNG" photo.heic
 
 ## Privacy and safety
 
-ezconvert makes no network connections and has no remote control or update mechanism. It only reads the
-files you drop on it and writes new files next to them. Conversions call built-in macOS tools (`sips`,
+ezconvert has no remote control or update mechanism. It only reads the files you drop on it and writes
+new files next to them. The only network connection it ever makes is to `api.anthropic.com`, and only
+when you've chosen Claude for Study — then the deck's text is sent to Anthropic to write the material.
+With the default on-device AI, nothing leaves your Mac. Conversions call built-in macOS tools (`sips`,
 `textutil`, `zip`) and ffmpeg with fixed argument lists — never through a shell — so file names can't be
 turned into commands.
 

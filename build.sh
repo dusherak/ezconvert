@@ -17,7 +17,8 @@ mkdir -p "$BUILD/$APP/Contents/MacOS" "$BUILD/$APP/Contents/Resources"
 
 # One binary that runs on both Apple Silicon and Intel Macs.
 for arch in arm64 x86_64; do
-  swiftc -O -swift-version 5 -target $arch-apple-macos14.0 \
+  # FoundationModels (on-device AI) only exists on macOS 26+, so link it weakly to keep launching on 14/15.
+  swiftc -O -swift-version 5 -target $arch-apple-macos14.0 -Xlinker -weak_framework -Xlinker FoundationModels \
     Sources/*.swift -o "$BUILD/ezconvert-$arch"
 done
 lipo -create "$BUILD/ezconvert-arm64" "$BUILD/ezconvert-x86_64" -output "$BUILD/$APP/Contents/MacOS/ezconvert"
@@ -38,6 +39,7 @@ cat > "$BUILD/$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>MIT License</string>
+  <key>NSAppleEventsUsageDescription</key><string>ezconvert opens Keynote files with Keynote to read their slides.</string>
 </dict>
 </plist>
 PLIST

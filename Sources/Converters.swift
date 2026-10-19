@@ -6,13 +6,14 @@ import CoreImage
 
 // MARK: - File kinds
 
-enum Kind { case image, video, audio, pdf, document, other }
+enum Kind { case image, video, audio, pdf, document, slides, other }
 
 let documentExtensions: Set<String> = ["docx", "doc", "rtf", "rtfd", "txt", "text", "md", "markdown", "html", "htm", "odt", "wordml", "webarchive"]
 
 func kind(of url: URL) -> Kind {
     let ext = url.pathExtension.lowercased()
     if documentExtensions.contains(ext) { return .document }
+    if slideExtensions.contains(ext) { return .slides }
     guard let t = UTType(filenameExtension: ext) else { return .other }
     if t.conforms(to: .pdf) { return .pdf }
     if t.conforms(to: .image) { return .image }
@@ -61,6 +62,7 @@ func menu(for urls: [URL]) -> [MenuItem] {
         case .audio:    list = audioMenu(urls)
         case .pdf:      list = pdfMenu(urls)
         case .document: list = documentMenu(urls)
+        case .slides:   list = slidesMenu(urls)
         case .other:    break
         }
     } else if kinds.isSubset(of: [.image, .pdf]) {
@@ -130,7 +132,8 @@ func each(_ f: @escaping (URL) throws -> URL) -> ([URL]) throws -> [URL] {
 // MARK: - Process helpers
 
 @discardableResult
-func shell(_ path: String, _ args: [String], cwd: URL? = nil, onLine: ((Substring) -> Void)? = nil) throws -> String {
+func shell(_ path: String, _ args: [String], cwd: URL? = nil, okExitCodes: Set<Int32> = [0],
+           onLine: ((Substring) -> Void)? = nil) throws -> String {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: path)
     p.arguments = args
@@ -162,7 +165,7 @@ func shell(_ path: String, _ args: [String], cwd: URL? = nil, onLine: ((Substrin
     }
     group.wait()
     p.waitUntilExit()
-    if p.terminationStatus != 0 {
+    if !okExitCodes.contains(p.terminationStatus) {
         let msg = String(decoding: errData, as: UTF8.self)
             .split(separator: "\n").last.map(String.init) ?? "\(path) exited with \(p.terminationStatus)"
         throw ConvError.failed(msg)
@@ -487,6 +490,7 @@ func renderPages(_ src: URL, type: NSBitmapImageRep.FileType, ext: String) throw
 
 func pdfMenu(_ urls: [URL]) -> [MenuItem] {
     var list = [
+        studyGroup(),
         MenuItem(group: "Images", "photo.on.rectangle", [
             Action(title: "PNG", symbol: "photo", run: each { try renderPages($0, type: .png, ext: "png") }),
             Action(title: "JPEG", symbol: "photo.fill", run: each { try renderPages($0, type: .jpeg, ext: "jpg") }),

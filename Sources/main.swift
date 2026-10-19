@@ -364,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let toast = Toast()
     var statusItem: NSStatusItem!
     var monitors: [Any] = []
+    let aiMenu = NSMenu()
     let dragPasteboard = NSPasteboard(name: .drag)
     var changeCountAtMouseDown = 0
     var shownForChangeCount = -1
@@ -384,8 +385,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let statusMenu = NSMenu()
         statusMenu.addItem(withTitle: "Hold ⇧ Shift while dragging a file", action: nil, keyEquivalent: "").isEnabled = false
         statusMenu.addItem(.separator())
+        let aiItem = NSMenuItem(title: "Study AI", action: nil, keyEquivalent: "")
+        aiItem.submenu = aiMenu
+        statusMenu.addItem(aiItem)
+        statusMenu.addItem(.separator())
         statusMenu.addItem(withTitle: "Quit ezconvert", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = statusMenu
+        buildAIMenu()
 
         monitors.append(NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
             guard let self else { return }
@@ -400,6 +406,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             radial.fileCount = 1
             showMenu(at: NSPoint(x: NSScreen.main!.frame.midX, y: NSScreen.main!.frame.midY), watch: false)
         }
+    }
+
+    // MARK: Study AI settings
+
+    func buildAIMenu() {
+        aiMenu.removeAllItems()
+        let engine = StudySettings.engine, hasKey = StudySettings.claudeKey != nil
+        let apple = aiMenu.addItem(withTitle: "On-device (Apple Intelligence)", action: #selector(useApple), keyEquivalent: "")
+        apple.state = engine == .apple ? .on : .off
+        let claude = aiMenu.addItem(withTitle: "Claude (Anthropic API)" + (hasKey ? "" : " — needs a key"), action: #selector(useClaude), keyEquivalent: "")
+        claude.state = engine == .claude ? .on : .off
+        aiMenu.addItem(.separator())
+        aiMenu.addItem(withTitle: hasKey ? "Change Claude API key…" : "Add Claude API key…", action: #selector(askForKey), keyEquivalent: "")
+        if hasKey { aiMenu.addItem(withTitle: "Remove Claude API key", action: #selector(removeKey), keyEquivalent: "") }
+        for item in aiMenu.items { item.target = self }
+    }
+
+    @objc func useApple() { StudySettings.engine = .apple; buildAIMenu() }
+
+    @objc func useClaude() {
+        if StudySettings.claudeKey == nil { askForKey() } else { StudySettings.engine = .claude; buildAIMenu() }
+    }
+
+    @objc func askForKey() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Claude API key"
+        alert.informativeText = "Paste an API key from console.anthropic.com. It's stored in your Mac's Keychain and only ever sent to api.anthropic.com. Slide text is sent to Anthropic when Claude is selected."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "sk-ant-…"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        if StudySettings.saveClaudeKey(key) {
+            StudySettings.engine = .claude
+            toast.show("Claude API key saved — Study now uses Claude")
+        } else {
+            toast.show("✗ Couldn't save the key to the Keychain", seconds: 6)
+        }
+        buildAIMenu()
+    }
+
+    @objc func removeKey() {
+        StudySettings.removeClaudeKey()
+        StudySettings.engine = .apple
+        buildAIMenu()
     }
 
     /// Called for every system-wide mouse drag; opens the menu when Shift is held over a fresh file drag.
