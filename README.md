@@ -5,6 +5,20 @@ A tiny macOS menu-bar app for converting files by dragging them.
 Hold **⇧ Shift** while dragging any file. A circular menu opens under the cursor; drop the file on a
 format and the result is saved next to the original. Everything runs locally — nothing is uploaded.
 
+## Install
+
+1. Download `ezconvert-<version>-macos.zip` from [Releases](https://github.com/dusherak/ezconvert/releases/latest)
+   and unzip it. Works on macOS 14+ (Apple Silicon and Intel).
+2. Drag `ezconvert.app` into your **Applications** folder and open it.
+3. The app isn't notarized by Apple, so macOS blocks the first launch. Open **System Settings → Privacy &
+   Security**, scroll down and click **Open Anyway** next to ezconvert, then confirm. You only do this once.
+4. An icon appears in the menu bar. Hold **⇧ Shift** while dragging a file to use it.
+5. For video and audio, install ffmpeg: `brew install ffmpeg` (needs [Homebrew](https://brew.sh)).
+   Images, PDFs and documents work without it.
+
+To start ezconvert at login, add it in System Settings → General → Login Items. Prefer to build it
+yourself? See [Build](#build).
+
 ## What it does
 
 | Files | Options |
