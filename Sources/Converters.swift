@@ -590,7 +590,8 @@ func zip(_ urls: [URL]) throws -> URL {
     let parents = Set(urls.map { $0.deletingLastPathComponent() })
     let dst = outputURL(for: urls[0], ext: "zip", suffix: urls.count > 1 ? " and \(urls.count - 1) more" : "")
     if parents.count == 1, let parent = parents.first {
-        try shell("/usr/bin/zip", ["-r", "-q", "-X", dst.path] + urls.map(\.lastPathComponent), cwd: parent)
+        // "./" prefix so a file named like "-TT=cmd" can never be read as a zip option.
+        try shell("/usr/bin/zip", ["-r", "-q", "-X", dst.path] + urls.map { "./" + $0.lastPathComponent }, cwd: parent)
     } else {
         try shell("/usr/bin/zip", ["-r", "-q", "-X", "-j", dst.path] + urls.map(\.path))
     }

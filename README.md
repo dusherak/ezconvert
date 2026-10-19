@@ -42,3 +42,14 @@ To start it at login, add it in System Settings → General → Login Items.
 ezconvert.app/Contents/MacOS/ezconvert --list photo.png             # show the menu for a file
 ezconvert.app/Contents/MacOS/ezconvert --run "Convert/PNG" photo.heic
 ```
+
+## Privacy and safety
+
+ezconvert makes no network connections and has no remote control or update mechanism. It only reads the
+files you drop on it and writes new files next to them. Conversions call built-in macOS tools (`sips`,
+`textutil`, `zip`) and ffmpeg with fixed argument lists — never through a shell — so file names can't be
+turned into commands.
+
+## License
+
+[MIT](LICENSE)
