@@ -1,4 +1,8 @@
 import AppKit
+import os
+
+/// Diagnostics: `log stream --predicate 'subsystem == "local.ezconvert"'`
+let log = Logger(subsystem: "local.ezconvert", category: "drag")
 
 // MARK: - Radial menu view
 
@@ -262,7 +266,10 @@ final class RadialView: NSView {
 
     // MARK: Drag destination
 
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        log.notice("Drag entered the menu")
+        return draggingUpdated(sender)
+    }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         updateHover(at: convert(sender.draggingLocation, from: nil))
@@ -275,6 +282,7 @@ final class RadialView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         updateHover(at: convert(sender.draggingLocation, from: nil))
+        log.notice("Drop on menu: \(self.selection?.path ?? "nothing", privacy: .public)")
         guard mode == .menu, let sel = selection,
               let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
                                                                options: [.urlReadingFileURLsOnly: true]) as? [URL],
@@ -363,7 +371,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let radial = RadialView(frame: NSRect(x: 0, y: 0, width: RadialView.size, height: RadialView.size))
     let toast = Toast()
     var statusItem: NSStatusItem!
-    var monitors: [Any] = []
+    var dragTimer: Timer?
+    var mouseWasDown = false
+    var loggedThisPress = false
     let aiMenu = NSMenu()
     let dragPasteboard = NSPasteboard(name: .drag)
     var changeCountAtMouseDown = 0
@@ -393,13 +403,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = statusMenu
         buildAIMenu()
 
-        monitors.append(NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
-            guard let self else { return }
-            self.changeCountAtMouseDown = self.dragPasteboard.changeCount
-        } as Any)
-        monitors.append(NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
-            self?.dragMoved()
-        } as Any)
+        // Poll instead of using global event monitors: macOS doesn't reliably forward other apps'
+        // mouse-drag events (especially during a Finder drag), but the button state, modifier keys
+        // and the drag pasteboard can always be read directly, with no permissions needed.
+        changeCountAtMouseDown = dragPasteboard.changeCount
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.pollDrag() }
+        RunLoop.main.add(timer, forMode: .common)  // keeps firing during menu tracking and drags
+        dragTimer = timer
+        log.notice("ezconvert started, watching for Shift-drags")
 
         if demo {
             radial.items = menu(for: [URL(fileURLWithPath: "/tmp/demo.mov")])
@@ -458,17 +469,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildAIMenu()
     }
 
-    /// Called for every system-wide mouse drag; opens the menu when Shift is held over a fresh file drag.
+    func pollDrag() {
+        let down = NSEvent.pressedMouseButtons & 1 != 0
+        if !down {
+            // While the button is up, keep the baseline current so the next drag is recognised as new.
+            changeCountAtMouseDown = dragPasteboard.changeCount
+            mouseWasDown = false
+            return
+        }
+        if !mouseWasDown { mouseWasDown = true; loggedThisPress = false }
+        dragMoved()
+    }
+
+    /// Opens the menu when Shift is held during a fresh file drag.
     func dragMoved() {
-        guard !(panel.isVisible && radial.mode == .menu),
-              NSEvent.modifierFlags.contains(.shift),
-              dragPasteboard.changeCount != changeCountAtMouseDown,
-              dragPasteboard.changeCount != shownForChangeCount,
-              let urls = dragPasteboard.readObjects(forClasses: [NSURL.self],
+        let shift = NSEvent.modifierFlags.contains(.shift)
+        let count = dragPasteboard.changeCount
+        let fresh = count != changeCountAtMouseDown && count != shownForChangeCount
+        if shift && fresh && !loggedThisPress {
+            loggedThisPress = true
+            let types = dragPasteboard.types?.map(\.rawValue).joined(separator: ", ") ?? "none"
+            log.notice("Shift-drag seen: pasteboard \(count) (baseline \(self.changeCountAtMouseDown)), types: \(types, privacy: .public)")
+        }
+        guard !(panel.isVisible && radial.mode == .menu), shift, fresh else { return }
+        guard let urls = dragPasteboard.readObjects(forClasses: [NSURL.self],
                                                     options: [.urlReadingFileURLsOnly: true]) as? [URL],
               !urls.isEmpty
-        else { return }
-        shownForChangeCount = dragPasteboard.changeCount
+        else {
+            log.notice("Drag has no file URLs, ignoring")
+            shownForChangeCount = count
+            return
+        }
+        log.notice("Opening menu for \(urls.count) file(s)")
+        shownForChangeCount = count
         activeJob = 0  // a running conversion keeps going; its result shows in the toast
         radial.items = menu(for: urls)
         radial.fileCount = urls.count
