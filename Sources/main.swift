@@ -565,6 +565,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSSound(named: "Glass")?.play()
                     let name = outs.count == 1 ? outs[0].lastPathComponent : "\(outs.count) files"
                     self.toast.show("✓ \(title) → \(name)", reveal: outs.first)
+                case .failure(ConvError.cancelled):
+                    self.toast.show("Cancelled", seconds: 2)
                 case .failure(let error):
                     NSSound(named: "Basso")?.play()
                     self.toast.show("✗ \(title) failed: \(error.localizedDescription)", seconds: 8)

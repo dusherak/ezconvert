@@ -6,7 +6,7 @@ import CoreImage
 
 // MARK: - File kinds
 
-enum Kind { case image, video, audio, pdf, document, slides, other }
+enum Kind { case image, video, audio, pdf, document, slides, archive, data, subtitle, ebook, other }
 
 let documentExtensions: Set<String> = ["docx", "doc", "rtf", "rtfd", "txt", "text", "md", "markdown", "html", "htm", "odt", "wordml", "webarchive"]
 
@@ -14,6 +14,10 @@ func kind(of url: URL) -> Kind {
     let ext = url.pathExtension.lowercased()
     if documentExtensions.contains(ext) { return .document }
     if slideExtensions.contains(ext) { return .slides }
+    if archiveExtensions.contains(ext) { return .archive }
+    if dataExtensions.contains(ext) { return .data }
+    if subtitleExtensions.contains(ext) { return .subtitle }
+    if ebookExtensions.contains(ext) { return .ebook }
     guard let t = UTType(filenameExtension: ext) else { return .other }
     if t.conforms(to: .pdf) { return .pdf }
     if t.conforms(to: .image) { return .image }
@@ -48,14 +52,23 @@ struct MenuItem {
 
 enum ConvError: LocalizedError {
     case failed(String)
-    var errorDescription: String? { if case .failed(let m) = self { return m }; return nil }
+    /// The user backed out (e.g. closed a file picker); not an error worth a sound.
+    case cancelled
+    var errorDescription: String? {
+        switch self {
+        case .failed(let m): return m
+        case .cancelled: return "Cancelled"
+        }
+    }
 }
 
 /// The wedges offered for a given set of dropped files.
 func menu(for urls: [URL]) -> [MenuItem] {
     let kinds = Set(urls.map(kind(of:)))
     var list: [MenuItem] = []
-    if kinds.count == 1, let k = kinds.first {
+    if let pair = deckAndTranscript(urls) {
+        list = studyWithTranscriptMenu(deck: pair.deck, transcript: pair.transcript)
+    } else if kinds.count == 1, let k = kinds.first {
         switch k {
         case .image:    list = imageMenu(urls)
         case .video:    list = videoMenu(urls)
@@ -63,6 +76,10 @@ func menu(for urls: [URL]) -> [MenuItem] {
         case .pdf:      list = pdfMenu(urls)
         case .document: list = documentMenu(urls)
         case .slides:   list = slidesMenu(urls)
+        case .archive:  return archiveMenu(urls)   // zipping an archive again isn't useful
+        case .data:     list = dataMenu(urls)
+        case .subtitle: list = subtitleMenu(urls)
+        case .ebook:    list = ebookMenu(urls)
         case .other:    break
         }
     } else if kinds.isSubset(of: [.image, .pdf]) {
@@ -85,11 +102,14 @@ func allActions(for urls: [URL]) -> [(path: String, action: Action)] {
 /// current file; `each` advances the file index.
 final class ProgressReporter {
     var onUpdate: ((Double) -> Void)?
+    /// The slice of the current file's progress that `report` fills (for multi-phase work).
+    var span: ClosedRange<Double> = 0...1
     private var index = 0, count = 1
 
-    func begin(_ i: Int, of n: Int) { index = i; count = max(n, 1); report(0) }
+    func begin(_ i: Int, of n: Int) { index = i; count = max(n, 1); span = 0...1; report(0) }
     func report(_ fraction: Double) {
-        onUpdate?((Double(index) + min(max(fraction, 0), 1)) / Double(count))
+        let f = span.lowerBound + min(max(fraction, 0), 1) * (span.upperBound - span.lowerBound)
+        onUpdate?((Double(index) + f) / Double(count))
     }
 }
 
@@ -171,6 +191,22 @@ func shell(_ path: String, _ args: [String], cwd: URL? = nil, okExitCodes: Set<I
         throw ConvError.failed(msg)
     }
     return String(decoding: outData, as: UTF8.self)
+}
+
+/// Runs a tool and returns its raw stdout (for binary output such as decompressed files).
+func shellData(_ path: String, _ args: [String]) throws -> Data {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: path)
+    p.arguments = args
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = FileHandle.nullDevice
+    p.standardInput = FileHandle.nullDevice
+    try p.run()
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    guard p.terminationStatus == 0 else { throw ConvError.failed("\((path as NSString).lastPathComponent) failed") }
+    return data
 }
 
 let ffmpegPath: String? = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"].first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -316,6 +352,14 @@ func imageMenu(_ urls: [URL]) -> [MenuItem] {
         ]),
         MenuItem(Action(title: "Remove BG", symbol: "person.crop.circle.badge.minus", run: each(removeBackground))),
         MenuItem(Action(title: urls.count > 1 ? "Merge PDF" : "PDF", symbol: "doc.richtext", run: { [try mergeToPDF($0)] })),
+        MenuItem(Action(title: "Text (OCR)", symbol: "text.viewfinder", run: each { src in
+            let text = try recognizeText(src)
+            guard !text.isEmpty else { throw ConvError.failed("No text found in \(src.lastPathComponent)") }
+            let dst = outputURL(for: src, ext: "txt")
+            try text.write(to: dst, atomically: true, encoding: .utf8)
+            return dst
+        })),
+        infoGroup(),
     ]
 }
 
@@ -378,6 +422,7 @@ func videoMenu(_ urls: [URL]) -> [MenuItem] {
             Action(title: "WAV", symbol: "waveform", run: each(ffConvert(ext: "wav", ["-vn", "-c:a", "pcm_s16le"]))),
         ]),
         MenuItem(group: "Edit", "wand.and.stars", [
+            extractSubtitlesAction,
             Action(title: "Mute", symbol: "speaker.slash", run: each { src in
                 let dst = outputURL(for: src, ext: src.pathExtension, suffix: " (muted)")
                 try ffmpeg(["-i", src.path, "-an", "-c:v", "copy", dst.path])
@@ -393,6 +438,7 @@ func videoMenu(_ urls: [URL]) -> [MenuItem] {
         ]),
         MenuItem(Action(title: "Thumbnail", symbol: "photo.on.rectangle", run: each(ffConvert(ext: "jpg", suffix: " (frame)",
             ["-ss", "1", "-frames:v", "1", "-q:v", "2"])))),
+        MenuItem(transcribeAction),
     ]
     if urls.count > 1 {
         list.insert(MenuItem(Action(title: "Merge", symbol: "rectangle.stack.badge.plus", run: { [try mergeVideos($0)] })), at: 0)
@@ -427,6 +473,7 @@ func audioMenu(_ urls: [URL]) -> [MenuItem] {
             Action(title: "Trim silence", symbol: "scissors", run: each(audioEdit(" (trimmed)", trimSilence))),
             Action(title: "1.5× speed", symbol: "hare", run: each(audioEdit(" (1.5x)", "atempo=1.5"))),
         ]),
+        MenuItem(transcribeAction),
     ]
     if urls.count > 1 {
         list.insert(MenuItem(Action(title: "Merge", symbol: "rectangle.stack.badge.plus", run: { urls in
@@ -490,7 +537,8 @@ func renderPages(_ src: URL, type: NSBitmapImageRep.FileType, ext: String) throw
 
 func pdfMenu(_ urls: [URL]) -> [MenuItem] {
     var list = [
-        studyGroup(),
+        studyGroup(urls),
+        infoGroup(),
         MenuItem(group: "Images", "photo.on.rectangle", [
             Action(title: "PNG", symbol: "photo", run: each { try renderPages($0, type: .png, ext: "png") }),
             Action(title: "JPEG", symbol: "photo.fill", run: each { try renderPages($0, type: .jpeg, ext: "jpg") }),
@@ -552,7 +600,12 @@ func documentToPDF(_ src: URL) throws -> URL {
     if ["txt", "text", "md", "markdown"].contains(ext) { opts[.documentType] = NSAttributedString.DocumentType.plain }
     let text = try NSAttributedString(url: src, options: opts, documentAttributes: nil)
     let dst = outputURL(for: src, ext: "pdf")
+    try printToPDF(text, to: dst)
+    return dst
+}
 
+/// Lays out styled text on US Letter pages and saves it as a PDF. Main thread only.
+func printToPDF(_ text: NSAttributedString, to dst: URL) throws {
     let info = NSPrintInfo(dictionary: [.jobSavingURL: dst])
     info.jobDisposition = .save
     info.paperSize = NSSize(width: 612, height: 792)
@@ -572,7 +625,6 @@ func documentToPDF(_ src: URL) throws -> URL {
     op.showsPrintPanel = false
     op.showsProgressPanel = false
     guard op.run() else { throw ConvError.failed("Couldn't create PDF") }
-    return dst
 }
 
 func documentMenu(_ urls: [URL]) -> [MenuItem] {
@@ -581,7 +633,7 @@ func documentMenu(_ urls: [URL]) -> [MenuItem] {
         ("HTML", "html", "chevron.left.forwardslash.chevron.right"), ("ODT", "odt", "doc"),
     ]
     let sourceExts = Set(urls.map { $0.pathExtension.lowercased() })
-    var list = [MenuItem(Action(title: "PDF", symbol: "doc.richtext", mainThread: true, run: each(documentToPDF)))]
+    var list = [MenuItem(Action(title: "PDF", symbol: "doc.richtext", mainThread: true, run: each(documentToPDF))), infoGroup()]
     for (title, ext, symbol) in targets where sourceExts != [ext] {
         list.append(MenuItem(Action(title: title, symbol: symbol, run: each(textutil(ext, ext: ext)))))
     }
